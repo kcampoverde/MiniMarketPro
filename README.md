@@ -2,6 +2,12 @@
 
 Sistema web de gestión de minimarkets, desarrollado en React.
 
+## 👥 Integrantes del Grupo
+
+- Kenny Campoverde
+- Dayeli García
+- Anthony Villamar
+
 ## 🚀 Características
 
 - Gestión de productos e inventario
