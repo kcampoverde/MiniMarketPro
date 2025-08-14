@@ -1,195 +1,255 @@
-import React, { useState, useEffect } from 'react';
-import { Button, Form, Alert } from 'react-bootstrap';
+import React, { useEffect, useMemo, useState } from "react";
+import { Container, Row, Col, Form, Button, Table, Alert, Card } from "react-bootstrap";
 
-function Productos() {
-  const [productos, setProductos] = useState(() => {
-    const guardados = localStorage.getItem("productos");
-    return guardados ? JSON.parse(guardados) : [];
-  });
+// Helpers de storage seguros
+const load = (key, def) => {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : def;
+  } catch {
+    return def;
+  }
+};
+const save = (key, value) => {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {}
+};
 
-  const [categorias, setCategorias] = useState([]);
-  const [formData, setFormData] = useState({
-    id: '',
-    nombre: '',
-    categoria: '',
-    precio: '',
-    stock: '',
-    fechaCaducidad: ''
-  });
-
+export default function Productos() {
+  const [productos, setProductos] = useState(() => load("productos", []));
+  const [categorias, setCategorias] = useState(() => load("categorias", []));
+  const [alerta, setAlerta] = useState("");
   const [modoEdicion, setModoEdicion] = useState(false);
   const [productoEditarId, setProductoEditarId] = useState(null);
-  const [alerta, setAlerta] = useState('');
 
-  // Cargar categorías desde localStorage
+  const [formData, setFormData] = useState({
+    id: "",
+    nombre: "",
+    categoria: "",
+    precio: "",
+    stock: "",
+    fechaCaducidad: "",
+  });
+
+  // Sincronización defensiva al volver a la pestaña o cambios desde otra pestaña
   useEffect(() => {
-    const cat = localStorage.getItem("categorias");
-    if (cat) {
-      const ordenadas = JSON.parse(cat).sort((a, b) => a.nombre.localeCompare(b.nombre));
-      setCategorias(ordenadas);
-    }
+    const reload = () => {
+      setProductos(load("productos", []));
+      setCategorias(load("categorias", []));
+    };
+    const onVis = () => document.visibilityState === "visible" && reload();
+    window.addEventListener("visibilitychange", onVis);
+    window.addEventListener("storage", reload);
+    return () => {
+      window.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("storage", reload);
+    };
   }, []);
 
-  // Guardar productos
-  useEffect(() => {
-    localStorage.setItem("productos", JSON.stringify(productos));
-  }, [productos]);
+  // Persistencia por efecto (no estorba aunque ya persistimos en el set)
+  useEffect(() => { save("productos", productos); }, [productos]);
 
-  const validarDatos = () => {
-    const { id, nombre, categoria, precio, stock } = formData;
-
-    if (!id.trim() || !nombre.trim() || !categoria.trim())
-      return "Todos los campos son obligatorios.";
-
-    if (productos.some(p => p.id === id && !modoEdicion))
-      return "❌ El ID ya existe. Ingrese uno único.";
-
-    if (!/^[a-zA-Z\s]+$/.test(nombre))
-      return "❌ El nombre solo debe contener letras.";
-
-    if (parseFloat(precio) < 0 || isNaN(precio))
-      return "❌ El precio no puede ser negativo ni estar vacío.";
-
-    if (parseInt(stock) < 0 || isNaN(stock))
-      return "❌ El stock no puede ser negativo ni estar vacío.";
-
-    return null;
-  };
+  const categoriasOptions = useMemo(() => {
+    return categorias.map((c) => (typeof c === "string" ? c : c?.nombre || "")).filter(Boolean);
+  }, [categorias]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
-    setFormData(prev => ({ ...prev, [name]: value }));
+    setFormData((f) => ({ ...f, [name]: value }));
+  };
+
+  const limpiarFormulario = () => {
+    setFormData({ id: "", nombre: "", categoria: "", precio: "", stock: "", fechaCaducidad: "" });
   };
 
   const handleSubmit = (e) => {
     e.preventDefault();
+    const nextId = (formData.id || "").trim() || crypto.randomUUID();
 
-    const error = validarDatos();
-    if (error) {
-      setAlerta(error);
+    // Validación básica
+    const { nombre, categoria, precio, stock } = formData;
+    if (!nombre?.trim() || !categoria?.trim()) {
+      setAlerta("❌ Todos los campos son obligatorios (nombre/categoría).");
+      return;
+    }
+    if (!/^[ a-zA-Z0-9áéíóúÁÉÍÓÚñÑ().,:-]+$/.test(nombre)) {
+      setAlerta("❌ El nombre contiene caracteres no válidos.");
+      return;
+    }
+    if (isNaN(precio) || Number(precio) < 0) {
+      setAlerta("❌ El precio debe ser un número ≥ 0.");
+      return;
+    }
+    if (!Number.isFinite(Number(stock)) || Number(stock) < 0 || !Number.isInteger(Number(stock))) {
+      setAlerta("❌ El stock debe ser un entero ≥ 0.");
       return;
     }
 
     if (modoEdicion) {
-      const actualizados = productos.map(p =>
-        p.id === productoEditarId
-          ? {
-              ...p,
-              ...formData,
-              precio: parseFloat(formData.precio),
-              stock: parseInt(formData.stock)
-            }
-          : p
-      );
-      setProductos(actualizados);
+      setProductos((prev) => {
+        const actualizados = prev.map((p) =>
+          String(p.id) === String(productoEditarId)
+            ? {
+                ...p,
+                ...formData,
+                id: nextId,
+                precio: parseFloat(formData.precio),
+                stock: parseInt(formData.stock, 10),
+              }
+            : p
+        );
+        // Persistir inmediatamente
+        save("productos", actualizados);
+        return actualizados;
+      });
       setModoEdicion(false);
       setProductoEditarId(null);
+      setAlerta("✅ Producto actualizado.");
     } else {
+      // Evitar duplicados de ID si el usuario lo ingresó manualmente
+      if (productos.some((p) => String(p.id) === String(nextId))) {
+        setAlerta("❌ El ID ya existe. Deja el campo vacío o ingresa otro.");
+        return;
+      }
       const nuevo = {
         ...formData,
+        id: nextId,
         precio: parseFloat(formData.precio),
-        stock: parseInt(formData.stock),
-        fechaCreacion: new Date().toLocaleDateString()
+        stock: parseInt(formData.stock, 10),
+        fechaCreacion: new Date().toLocaleDateString(),
       };
-      setProductos([...productos, nuevo]);
+      setProductos((prev) => {
+        const nuevos = [...prev, nuevo];
+        save("productos", nuevos); // Persistir inmediatamente
+        return nuevos;
+      });
+      setAlerta("✅ Producto guardado.");
     }
 
-    setAlerta("✅ Producto guardado correctamente.");
-    setTimeout(() => setAlerta(''), 3000);
+    setTimeout(() => setAlerta(""), 2500);
+    limpiarFormulario();
+  };
 
-    setFormData({ id: '', nombre: '', categoria: '', precio: '', stock: '', fechaCaducidad: '' });
+  const handleEditar = (p) => {
+    setModoEdicion(true);
+    setProductoEditarId(p.id);
+    setFormData({
+      id: p.id,
+      nombre: p.nombre,
+      categoria: p.categoria,
+      precio: String(p.precio),
+      stock: String(p.stock),
+      fechaCaducidad: p.fechaCaducidad || "",
+    });
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const handleEliminar = (id) => {
+    if (!window.confirm("¿Eliminar producto?")) return;
+    setProductos((prev) => {
+      const restantes = prev.filter((p) => String(p.id) !== String(id));
+      save("productos", restantes);
+      return restantes;
+    });
   };
 
   return (
-    <div className="container mt-4">
-      <h2>Registro de Nuevo Producto</h2>
-      {alerta && <Alert variant={alerta.startsWith("✅") ? "success" : "danger"}>{alerta}</Alert>}
+    <Container className="py-4">
+      <Row>
+        <Col md={5}>
+          <Card className="mb-3">
+            <Card.Body>
+              <h3 className="mb-3">{modoEdicion ? "Editar producto" : "Nuevo producto"}</h3>
+              {alerta && <Alert variant={alerta.startsWith("✅") ? "success" : "danger"}>{alerta}</Alert>}
 
-      <Form onSubmit={handleSubmit}>
-        <Form.Group>
-          <Form.Label>ID</Form.Label>
-          <Form.Control
-            type="text"
-            name="id"
-            value={formData.id}
-            onChange={handleChange}
-            required
-          />
-        </Form.Group>
+              <Form onSubmit={handleSubmit}>
+                <Form.Group className="mb-2">
+                  <Form.Label>ID (opcional, se autogenera si lo dejas vacío)</Form.Label>
+                  <Form.Control name="id" value={formData.id} onChange={handleChange} placeholder="Ej: P-001 (opcional)" />
+                </Form.Group>
 
-        <Form.Group>
-          <Form.Label>Nombre</Form.Label>
-          <Form.Control
-            type="text"
-            name="nombre"
-            value={formData.nombre}
-            onChange={handleChange}
-            required
-          />
-        </Form.Group>
+                <Form.Group className="mb-2">
+                  <Form.Label>Nombre</Form.Label>
+                  <Form.Control name="nombre" value={formData.nombre} onChange={handleChange} required />
+                </Form.Group>
 
-        <Form.Group>
-          <Form.Label>Categoría</Form.Label>
-          <Form.Select
-            name="categoria"
-            value={formData.categoria}
-            onChange={handleChange}
-            required
-          >
-            <option value="">Seleccione una categoría</option>
-            {categorias.map((cat, idx) => (
-              <option key={idx} value={cat.nombre}>
-                {cat.nombre}
-              </option>
-            ))}
-          </Form.Select>
-        </Form.Group>
+                <Form.Group className="mb-2">
+                  <Form.Label>Categoría</Form.Label>
+                  <Form.Select name="categoria" value={formData.categoria} onChange={handleChange} required>
+                    <option value="">-- Selecciona --</option>
+                    {categoriasOptions.map((c) => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </Form.Select>
+                </Form.Group>
 
-        <Form.Group>
-          <Form.Label>Precio ($)</Form.Label>
-          <Form.Control
-            type="number"
-            name="precio"
-            min="0"
-            step="0.01"
-            value={formData.precio}
-            onChange={handleChange}
-            required
-          />
-        </Form.Group>
+                <Row>
+                  <Col>
+                    <Form.Group className="mb-2">
+                      <Form.Label>Precio</Form.Label>
+                      <Form.Control type="number" step="0.01" min="0" name="precio" value={formData.precio} onChange={handleChange} required />
+                    </Form.Group>
+                  </Col>
+                  <Col>
+                    <Form.Group className="mb-2">
+                      <Form.Label>Stock</Form.Label>
+                      <Form.Control type="number" min="0" name="stock" value={formData.stock} onChange={handleChange} required />
+                    </Form.Group>
+                  </Col>
+                </Row>
 
-        <Form.Group>
-          <Form.Label>Stock</Form.Label>
-          <Form.Control
-            type="number"
-            name="stock"
-            min="0"
-            value={formData.stock}
-            onChange={handleChange}
-            required
-          />
-        </Form.Group>
+                <Form.Group className="mb-3">
+                  <Form.Label>Fecha de caducidad (opcional)</Form.Label>
+                  <Form.Control type="date" name="fechaCaducidad" value={formData.fechaCaducidad} onChange={handleChange} />
+                </Form.Group>
 
-        <Form.Group>
-          <Form.Label>Fecha de caducidad</Form.Label>
-          <Form.Control
-            type="date"
-            name="fechaCaducidad"
-            value={formData.fechaCaducidad}
-            onChange={handleChange}
-          />
-        </Form.Group>
+                <div className="d-flex gap-2">
+                  <Button type="submit" variant="primary">{modoEdicion ? "Guardar cambios" : "Agregar"}</Button>
+                  <Button type="button" variant="secondary" onClick={limpiarFormulario}>Limpiar</Button>
+                  {modoEdicion && (
+                    <Button type="button" variant="outline-danger" onClick={() => { setModoEdicion(false); setProductoEditarId(null); limpiarFormulario(); }}>
+                      Cancelar edición
+                    </Button>
+                  )}
+                </div>
+              </Form>
+            </Card.Body>
+          </Card>
+          <Alert variant="info">
+            Recuerda crear categorías en <strong>Categorías</strong> para verlas en el selector.
+          </Alert>
+        </Col>
 
-        <Button
-          type="submit"
-          className="mt-2"
-          variant={modoEdicion ? "warning" : "primary"}
-        >
-          {modoEdicion ? "Actualizar" : "Agregar"}
-        </Button>
-      </Form>
-    </div>
+        <Col md={7}>
+          <h3 className="mb-3">Lista de productos</h3>
+          <Table striped bordered hover size="sm" responsive>
+            <thead>
+              <tr>
+                <th>ID</th><th>Nombre</th><th>Categoría</th><th>Precio</th><th>Stock</th><th>Caducidad</th><th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              {productos.length === 0 ? (
+                <tr><td colSpan={7} className="text-center">No hay productos.</td></tr>
+              ) : productos.map((p) => (
+                <tr key={String(p.id)}>
+                  <td>{p.id}</td>
+                  <td>{p.nombre}</td>
+                  <td>{p.categoria}</td>
+                  <td>${Number(p.precio).toFixed(2)}</td>
+                  <td>{p.stock}</td>
+                  <td>{p.fechaCaducidad || "-"}</td>
+                  <td className="d-flex gap-1">
+                    <Button size="sm" variant="outline-primary" onClick={() => handleEditar(p)}>Editar</Button>
+                    <Button size="sm" variant="outline-danger" onClick={() => handleEliminar(p.id)}>Eliminar</Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        </Col>
+      </Row>
+    </Container>
   );
 }
-
-export default Productos;
