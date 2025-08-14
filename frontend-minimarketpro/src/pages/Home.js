@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Container, Row, Col, Card, Button, Table, Alert } from 'react-bootstrap';
+import { Container, Row, Col, Card, Button } from 'react-bootstrap';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
+import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, BarChart, Bar } from 'recharts';
 
 // Helpers de storage
 const load = (key, def) => {
@@ -18,7 +19,6 @@ export default function Home() {
   const [productos, setProductos] = useState(() => load("productos", []));
   const [ventas, setVentas] = useState(() => load("ventas", []));
   const [clientes, setClientes] = useState(() => load("clientes", []));
-  const [categorias, setCategorias] = useState(() => load("categorias", []));
 
   // Actualizar datos cuando se vuelva a la página
   useEffect(() => {
@@ -26,7 +26,6 @@ export default function Home() {
       setProductos(load("productos", []));
       setVentas(load("ventas", []));
       setClientes(load("clientes", []));
-      setCategorias(load("categorias", []));
     };
     
     const onVis = () => document.visibilityState === "visible" && reload();
@@ -39,240 +38,201 @@ export default function Home() {
     };
   }, []);
 
-  // Estadísticas calculadas
+  // Estadísticas básicas
   const estadisticas = useMemo(() => {
-    // Productos con stock bajo (menos de 10)
-    const stockBajo = productos.filter(p => Number(p.stock) < 10);
-    
-    // Productos próximos a vencer (en los próximos 30 días)
     const hoy = new Date();
-    const en30Dias = new Date(hoy.getTime() + 30 * 24 * 60 * 60 * 1000);
-    const proximosVencer = productos.filter(p => {
-      if (!p.fechaCaducidad) return false;
-      const fechaCad = new Date(p.fechaCaducidad);
-      return fechaCad >= hoy && fechaCad <= en30Dias;
-    });
-
-    // Ventas del día actual
     const ventasHoy = ventas.filter(v => {
       const fechaVenta = new Date(v.fecha);
       return fechaVenta.toDateString() === hoy.toDateString();
     });
-
-    // Total de ventas del día
     const totalVentasHoy = ventasHoy.reduce((sum, v) => sum + Number(v.total), 0);
+    const stockBajo = productos.filter(p => Number(p.stock) < 10).length;
 
-    // Ventas de la semana
-    const inicioSemana = new Date(hoy);
-    inicioSemana.setDate(hoy.getDate() - hoy.getDay());
-    inicioSemana.setHours(0, 0, 0, 0);
-    
-    const ventasSemana = ventas.filter(v => {
-      const fechaVenta = new Date(v.fecha);
-      return fechaVenta >= inicioSemana;
-    });
-
-    const totalVentasSemana = ventasSemana.reduce((sum, v) => sum + Number(v.total), 0);
-
-    // Valor total del inventario
-    const valorInventario = productos.reduce((sum, p) => sum + (Number(p.precio) * Number(p.stock)), 0);
-
-    return {
-      stockBajo,
-      proximosVencer,
-      ventasHoy: ventasHoy.length,
-      totalVentasHoy,
-      ventasSemana: ventasSemana.length,
-      totalVentasSemana,
-      valorInventario
-    };
+    return { ventasHoy: ventasHoy.length, totalVentasHoy, stockBajo };
   }, [productos, ventas]);
+
+  // Datos para gráfico de ventas de los últimos 7 días
+  const datosVentas = useMemo(() => {
+    const hoy = new Date();
+    const datos = [];
+    
+    for (let i = 6; i >= 0; i--) {
+      const fecha = new Date(hoy);
+      fecha.setDate(hoy.getDate() - i);
+      
+      const ventasDelDia = ventas.filter(v => {
+        const fechaVenta = new Date(v.fecha);
+        return fechaVenta.toDateString() === fecha.toDateString();
+      });
+      
+      const totalDia = ventasDelDia.reduce((sum, v) => sum + Number(v.total), 0);
+      
+      datos.push({
+        dia: fecha.toLocaleDateString('es-ES', { weekday: 'short' }),
+        ventas: totalDia,
+        cantidad: ventasDelDia.length
+      });
+    }
+    
+    return datos;
+  }, [ventas]);
+
+  // Top 3 productos más vendidos
+  const topProductos = useMemo(() => {
+    const conteoProductos = {};
+    
+    ventas.forEach(venta => {
+      venta.items?.forEach(item => {
+        const id = item.id;
+        if (!conteoProductos[id]) {
+          conteoProductos[id] = {
+            nombre: item.nombre,
+            cantidad: 0
+          };
+        }
+        conteoProductos[id].cantidad += item.cantidad;
+      });
+    });
+    
+    return Object.values(conteoProductos)
+      .sort((a, b) => b.cantidad - a.cantidad)
+      .slice(0, 3)
+      .map(p => ({
+        nombre: p.nombre.length > 15 ? p.nombre.substring(0, 15) + '...' : p.nombre,
+        cantidad: p.cantidad
+      }));
+  }, [ventas]);
 
   const horaActual = new Date().getHours();
   const saludo = horaActual < 12 ? "Buenos días" : horaActual < 18 ? "Buenas tardes" : "Buenas noches";
 
   return (
-    <Container className="py-4">
-      {/* Saludo personalizado */}
-      <Row className="mb-4">
+    <Container className="py-5">
+      {/* Saludo */}
+      <Row className="mb-5 text-center">
         <Col>
-          <Card className="bg-primary text-white">
+          <h1 className="display-4 text-muted">{saludo}</h1>
+          <p className="lead">{usuarioActual?.usuario || 'Usuario'}</p>
+        </Col>
+      </Row>
+
+      {/* Estadísticas simples */}
+      <Row className="mb-5 text-center">
+        <Col md={4}>
+          <h2 className="text-primary">{productos.length}</h2>
+          <p className="text-muted">Productos</p>
+        </Col>
+        <Col md={4}>
+          <h2 className="text-success">{estadisticas.ventasHoy}</h2>
+          <p className="text-muted">Ventas hoy</p>
+        </Col>
+        <Col md={4}>
+          <h2 className="text-info">{clientes.length}</h2>
+          <p className="text-muted">Clientes</p>
+        </Col>
+      </Row>
+
+      {/* Gráficos minimalistas */}
+      <Row className="mb-5">
+        <Col md={8}>
+          <Card className="border-0 shadow-sm">
             <Card.Body>
-              <h2>{saludo}, {usuarioActual?.usuario || 'Usuario'}! 👋</h2>
-              <p className="mb-0">
-                Bienvenido a MiniMarketPro - Tu sistema de gestión de minimarket
-                {usuarioActual?.rol && ` | Rol: ${usuarioActual.rol}`}
-              </p>
+              <h6 className="text-muted mb-3">Ventas últimos 7 días</h6>
+              <ResponsiveContainer width="100%" height={200}>
+                <LineChart data={datosVentas}>
+                  <XAxis 
+                    dataKey="dia" 
+                    axisLine={false} 
+                    tickLine={false}
+                    tick={{ fontSize: 12, fill: '#6c757d' }}
+                  />
+                  <YAxis hide />
+                  <Line 
+                    type="monotone" 
+                    dataKey="ventas" 
+                    stroke="#0d6efd" 
+                    strokeWidth={2}
+                    dot={{ fill: '#0d6efd', strokeWidth: 0, r: 4 }}
+                    activeDot={{ r: 6, fill: '#0d6efd' }}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </Card.Body>
+          </Card>
+        </Col>
+        <Col md={4}>
+          <Card className="border-0 shadow-sm h-100">
+            <Card.Body>
+              <h6 className="text-muted mb-3">Top productos</h6>
+              {topProductos.length > 0 ? (
+                <ResponsiveContainer width="100%" height={200}>
+                  <BarChart data={topProductos} layout="horizontal">
+                    <XAxis type="number" hide />
+                    <YAxis 
+                      dataKey="nombre" 
+                      type="category" 
+                      width={80}
+                      axisLine={false}
+                      tickLine={false}
+                      tick={{ fontSize: 11, fill: '#6c757d' }}
+                    />
+                    <Bar 
+                      dataKey="cantidad" 
+                      fill="#20c997" 
+                      radius={[0, 4, 4, 0]}
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="d-flex align-items-center justify-content-center h-100">
+                  <p className="text-muted mb-0">Sin datos suficientes</p>
+                </div>
+              )}
             </Card.Body>
           </Card>
         </Col>
       </Row>
 
-      {/* Estadísticas principales */}
-      <Row className="mb-4">
-        <Col md={3}>
-          <Card className="text-center h-100">
-            <Card.Body>
-              <h1 className="text-primary">{productos.length}</h1>
-              <p className="mb-0">Productos</p>
-              <small className="text-muted">Registrados</small>
-            </Card.Body>
-          </Card>
-        </Col>
-        <Col md={3}>
-          <Card className="text-center h-100">
-            <Card.Body>
-              <h1 className="text-success">{clientes.length}</h1>
-              <p className="mb-0">Clientes</p>
-              <small className="text-muted">Registrados</small>
-            </Card.Body>
-          </Card>
-        </Col>
-        <Col md={3}>
-          <Card className="text-center h-100">
-            <Card.Body>
-              <h1 className="text-info">{estadisticas.ventasHoy}</h1>
-              <p className="mb-0">Ventas Hoy</p>
-              <small className="text-muted">${estadisticas.totalVentasHoy.toFixed(2)}</small>
-            </Card.Body>
-          </Card>
-        </Col>
-        <Col md={3}>
-          <Card className="text-center h-100">
-            <Card.Body>
-              <h1 className="text-warning">{categorias.length}</h1>
-              <p className="mb-0">Categorías</p>
-              <small className="text-muted">Activas</small>
-            </Card.Body>
-          </Card>
-        </Col>
-      </Row>
-
-      {/* Estadísticas de ventas */}
-      <Row className="mb-4">
-        <Col md={6}>
-          <Card>
-            <Card.Header>
-              <h5 className="mb-0">📊 Resumen de Ventas</h5>
-            </Card.Header>
-            <Card.Body>
-              <Row>
-                <Col>
-                  <p><strong>Hoy:</strong> {estadisticas.ventasHoy} ventas</p>
-                  <p><strong>Total hoy:</strong> ${estadisticas.totalVentasHoy.toFixed(2)}</p>
-                </Col>
-                <Col>
-                  <p><strong>Esta semana:</strong> {estadisticas.ventasSemana} ventas</p>
-                  <p><strong>Total semana:</strong> ${estadisticas.totalVentasSemana.toFixed(2)}</p>
-                </Col>
-              </Row>
-            </Card.Body>
-          </Card>
-        </Col>
-        <Col md={6}>
-          <Card>
-            <Card.Header>
-              <h5 className="mb-0">💰 Valor del Inventario</h5>
-            </Card.Header>
-            <Card.Body>
-              <h3 className="text-success">${estadisticas.valorInventario.toFixed(2)}</h3>
-              <p className="text-muted mb-0">Valor total de productos en stock</p>
-            </Card.Body>
-          </Card>
-        </Col>
-      </Row>
-
-      {/* Alertas importantes */}
-      {(estadisticas.stockBajo.length > 0 || estadisticas.proximosVencer.length > 0) && (
+      {/* Alerta simple */}
+      {estadisticas.stockBajo > 0 && (
         <Row className="mb-4">
-          <Col>
-            <h4>🚨 Alertas Importantes</h4>
+          <Col className="text-center">
+            <div className="alert alert-warning">
+              {estadisticas.stockBajo} productos con stock bajo
+            </div>
           </Col>
         </Row>
       )}
 
-      {estadisticas.stockBajo.length > 0 && (
-        <Row className="mb-3">
-          <Col>
-            <Alert variant="warning">
-              <Alert.Heading>⚠️ Productos con Stock Bajo</Alert.Heading>
-              <p>Los siguientes productos tienen menos de 10 unidades en stock:</p>
-              <Table striped size="sm">
-                <thead>
-                  <tr>
-                    <th>Producto</th>
-                    <th>Stock Actual</th>
-                    <th>Categoría</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {estadisticas.stockBajo.slice(0, 5).map(p => (
-                    <tr key={p.id}>
-                      <td>{p.nombre}</td>
-                      <td className="text-danger">{p.stock}</td>
-                      <td>{p.categoria}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </Table>
-              {estadisticas.stockBajo.length > 5 && (
-                <p className="mb-0">...y {estadisticas.stockBajo.length - 5} productos más.</p>
-              )}
-            </Alert>
-          </Col>
-        </Row>
-      )}
-
-      {estadisticas.proximosVencer.length > 0 && (
-        <Row className="mb-3">
-          <Col>
-            <Alert variant="danger">
-              <Alert.Heading>⏰ Productos Próximos a Vencer</Alert.Heading>
-              <p>Los siguientes productos vencen en los próximos 30 días:</p>
-              <Table striped size="sm">
-                <thead>
-                  <tr>
-                    <th>Producto</th>
-                    <th>Fecha de Vencimiento</th>
-                    <th>Stock</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {estadisticas.proximosVencer.slice(0, 5).map(p => (
-                    <tr key={p.id}>
-                      <td>{p.nombre}</td>
-                      <td className="text-danger">{p.fechaCaducidad}</td>
-                      <td>{p.stock}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </Table>
-              {estadisticas.proximosVencer.length > 5 && (
-                <p className="mb-0">...y {estadisticas.proximosVencer.length - 5} productos más.</p>
-              )}
-            </Alert>
-          </Col>
-        </Row>
-      )}
-
-
-
-      {/* Footer informativo */}
-      <Row className="mt-5">
-        <Col>
-          <Card className="bg-light">
-            <Card.Body className="text-center">
-              <p className="mb-0">
-                <small className="text-muted">
-                  MiniMarketPro v1.0 | Sistema de gestión para minimarkets | 
-                  Fecha: {new Date().toLocaleDateString()} | 
-                  Hora: {new Date().toLocaleTimeString()}
-                </small>
-              </p>
-            </Card.Body>
-          </Card>
+      {/* Acciones principales */}
+      <Row className="text-center">
+        <Col md={4} className="mb-3">
+          <Button as={Link} to="/ventas" variant="primary" size="lg" className="w-100">
+            Nueva Venta
+          </Button>
+        </Col>
+        <Col md={4} className="mb-3">
+          <Button as={Link} to="/inventario" variant="outline-secondary" size="lg" className="w-100">
+            Ver Inventario
+          </Button>
+        </Col>
+        <Col md={4} className="mb-3">
+          <Button as={Link} to="/clientes" variant="outline-secondary" size="lg" className="w-100">
+            Clientes
+          </Button>
         </Col>
       </Row>
+
+      {/* Solo admin ve gestión de productos */}
+      {usuarioActual?.rol === 'admin' && (
+        <Row className="mt-4 text-center">
+          <Col md={6} className="mx-auto">
+            <Button as={Link} to="/productos" variant="outline-warning" size="lg" className="w-100">
+              Gestionar Productos
+            </Button>
+          </Col>
+        </Row>
+      )}
     </Container>
   );
 }

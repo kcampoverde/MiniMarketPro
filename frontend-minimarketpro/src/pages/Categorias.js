@@ -1,84 +1,126 @@
 import React, { useState, useEffect } from 'react';
-import { Table, Button, Form } from 'react-bootstrap';
-
-const CATEGORIAS_KEY = 'categorias';
+import { Table, Button, Form, Alert, Spinner } from 'react-bootstrap';
+import { categoriasAPI } from '../services/api';
 
 function Categorias() {
-  const [categorias, setCategorias] = useState(() => {
-    try {
-      const guardadas = JSON.parse(localStorage.getItem(CATEGORIAS_KEY));
-      return Array.isArray(guardadas) ? guardadas : [];
-    } catch (err) {
-      console.error("Error al cargar categorías desde localStorage:", err);
-      return [];
-    }
-  });
-
+  const [categorias, setCategorias] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [nombre, setNombre] = useState('');
+  const [descripcion, setDescripcion] = useState('');
   const [modoEdicion, setModoEdicion] = useState(false);
   const [categoriaEditarId, setCategoriaEditarId] = useState(null);
-  const [filtro, setFiltro] = useState(''); // 🔍 Nuevo: filtro de búsqueda
+  const [filtro, setFiltro] = useState('');
+  const [alerta, setAlerta] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  // Cargar categorías
+  const cargarCategorias = async () => {
+    try {
+      const response = await categoriasAPI.getAll(true);
+      setCategorias(response.data);
+    } catch (error) {
+      setAlerta(`❌ Error cargando categorías: ${error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    try {
-      localStorage.setItem(CATEGORIAS_KEY, JSON.stringify(categorias));
-    } catch (err) {
-      console.error("Error al guardar categorías:", err);
-    }
-  }, [categorias]);
+    cargarCategorias();
+  }, []);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (!nombre.trim()) return;
 
-    if (modoEdicion) {
-      const actualizadas = categorias.map((cat) =>
-        cat.id === categoriaEditarId ? { ...cat, nombre: nombre.trim() } : cat
-      );
-      setCategorias(actualizadas);
-      setModoEdicion(false);
-      setCategoriaEditarId(null);
-    } else {
-      const nuevaCategoria = {
-        id: crypto.randomUUID(),
-        nombre: nombre.trim()
-      };
-      setCategorias((prev) => [...prev, nuevaCategoria]);
-    }
+    setSubmitting(true);
+    setAlerta('');
 
-    setNombre('');
-  };
-
-  const handleEliminar = (id) => {
-    if (window.confirm("¿Eliminar esta categoría?")) {
-      setCategorias((prev) => prev.filter((cat) => cat.id !== id));
-      if (modoEdicion && categoriaEditarId === id) {
+    try {
+      if (modoEdicion) {
+        await categoriasAPI.update(categoriaEditarId, {
+          nombre: nombre.trim(),
+          descripcion: descripcion.trim() || null
+        });
+        setAlerta('✅ Categoría actualizada exitosamente');
         setModoEdicion(false);
         setCategoriaEditarId(null);
-        setNombre('');
+      } else {
+        await categoriasAPI.create({
+          nombre: nombre.trim(),
+          descripcion: descripcion.trim() || null
+        });
+        setAlerta('✅ Categoría creada exitosamente');
       }
+
+      setNombre('');
+      setDescripcion('');
+      await cargarCategorias();
+    } catch (error) {
+      setAlerta(`❌ Error: ${error.message}`);
+    } finally {
+      setSubmitting(false);
     }
+
+    setTimeout(() => setAlerta(''), 3000);
+  };
+
+  const handleEliminar = async (id) => {
+    if (!window.confirm("¿Eliminar esta categoría?")) return;
+
+    try {
+      await categoriasAPI.delete(id);
+      setAlerta('✅ Categoría eliminada exitosamente');
+      await cargarCategorias();
+    } catch (error) {
+      setAlerta(`❌ Error eliminando categoría: ${error.message}`);
+    }
+
+    setTimeout(() => setAlerta(''), 3000);
   };
 
   const handleEditar = (cat) => {
     setNombre(cat.nombre);
+    setDescripcion(cat.descripcion || '');
     setModoEdicion(true);
     setCategoriaEditarId(cat.id);
   };
 
-  // 🔍 Filtrado de categorías
+  const cancelarEdicion = () => {
+    setModoEdicion(false);
+    setCategoriaEditarId(null);
+    setNombre('');
+    setDescripcion('');
+  };
+
+  // Filtrado de categorías
   const categoriasFiltradas = categorias.filter((cat) =>
     cat.nombre.toLowerCase().includes(filtro.toLowerCase())
   );
+
+  if (loading) {
+    return (
+      <div className="container mt-4 text-center">
+        <Spinner animation="border" />
+        <p>Cargando categorías...</p>
+      </div>
+    );
+  }
 
   return (
     <div className="container mt-4">
       <h2>Gestión de Categorías</h2>
       <p>Administra aquí las categorías de productos.</p>
 
+      {alerta && (
+        <Alert variant={alerta.startsWith('✅') ? 'success' : 'danger'}>
+          {alerta}
+        </Alert>
+      )}
+
       {/* Formulario para agregar/editar */}
       <Form onSubmit={handleSubmit} className="mb-4">
-        <Form.Group controlId="formNombreCategoria">
+        <Form.Group controlId="formNombreCategoria" className="mb-3">
           <Form.Label>Nombre de la categoría</Form.Label>
           <Form.Control
             type="text"
@@ -88,16 +130,43 @@ function Categorias() {
             required
           />
         </Form.Group>
-        <Button
-          variant={modoEdicion ? "warning" : "primary"}
-          type="submit"
-          className="mt-3"
-        >
-          {modoEdicion ? "Guardar Cambios" : "Agregar Categoría"}
-        </Button>
+
+        <Form.Group controlId="formDescripcionCategoria" className="mb-3">
+          <Form.Label>Descripción (opcional)</Form.Label>
+          <Form.Control
+            as="textarea"
+            rows={2}
+            placeholder="Descripción de la categoría"
+            value={descripcion}
+            onChange={(e) => setDescripcion(e.target.value)}
+          />
+        </Form.Group>
+
+        <div className="d-flex gap-2">
+          <Button
+            variant={modoEdicion ? "warning" : "primary"}
+            type="submit"
+            disabled={submitting}
+          >
+            {submitting ? (
+              <>
+                <Spinner size="sm" className="me-2" />
+                {modoEdicion ? "Actualizando..." : "Creando..."}
+              </>
+            ) : (
+              modoEdicion ? "Guardar Cambios" : "Agregar Categoría"
+            )}
+          </Button>
+
+          {modoEdicion && (
+            <Button variant="secondary" onClick={cancelarEdicion}>
+              Cancelar
+            </Button>
+          )}
+        </div>
       </Form>
 
-      {/* 🔍 Barra de búsqueda */}
+      {/* Barra de búsqueda */}
       <Form.Group controlId="busquedaCategoria" className="mb-3">
         <Form.Control
           type="text"
@@ -113,14 +182,15 @@ function Categorias() {
           <tr>
             <th>#</th>
             <th>Nombre</th>
+            <th>Descripción</th>
             <th>Acciones</th>
           </tr>
         </thead>
         <tbody>
           {categoriasFiltradas.length === 0 ? (
             <tr>
-              <td colSpan="3" className="text-center">
-                No hay coincidencias.
+              <td colSpan="4" className="text-center">
+                {filtro ? 'No hay coincidencias.' : 'No hay categorías registradas.'}
               </td>
             </tr>
           ) : (
@@ -128,6 +198,7 @@ function Categorias() {
               <tr key={cat.id}>
                 <td>{index + 1}</td>
                 <td>{cat.nombre}</td>
+                <td>{cat.descripcion || '-'}</td>
                 <td>
                   <Button
                     variant="warning"
